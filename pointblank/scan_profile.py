@@ -159,9 +159,10 @@ class _BoolProfile(ColumnProfile):
         col_vals: list[Any] = summarized_groupby["_col"].to_list()
         freqs: list[int] = summarized_groupby["_freq"].to_list()
 
-        freq_dict: dict[str, int] = {
-            str(colval): freq for colval, freq in zip(col_vals, freqs, strict=True)
-        }
+        # Always report both `True` and `False` counts (even if one of the values is absent) so
+        # that the frequencies of all boolean columns share the same keys
+        freq_dict: dict[str, int] = {"True": 0, "False": 0}
+        freq_dict |= {str(colval): freq for colval, freq in zip(col_vals, freqs, strict=True)}
 
         self.statistics.extend([FreqStat(freq_dict)])
 

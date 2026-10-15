@@ -239,6 +239,55 @@ def test_col_summary_tbl_polars_categorical_column():
     assert isinstance(tabular_output, GT)
 
 
+@pytest.mark.parametrize("tbl_type", ["polars", "pandas", "duckdb"])
+@pytest.mark.parametrize(
+    "bool_data",
+    [
+        pytest.param({"bool_col": [True]}, id="one-row"),
+        pytest.param({"bool_col": [True, True, True]}, id="all-true"),
+        pytest.param({"bool_col": [True, None, True]}, id="true-and-missing"),
+        pytest.param({"bool_col": [False, False, False]}, id="all-false"),
+        pytest.param(
+            {"all_true": [True, True, True], "mixed": [True, False, False]},
+            id="all-true-then-mixed",
+        ),
+        pytest.param(
+            {"mixed": [True, True, False], "all_true": [True, True, True]},
+            id="mixed-then-all-true",
+        ),
+    ],
+)
+def test_col_summary_tbl_bool_column_missing_a_value(bool_data, tbl_type):
+    import ibis
+
+    df_pl = pl.DataFrame(bool_data, schema={col: pl.Boolean for col in bool_data})
+    n_bool_cols = len(bool_data)
+
+    if tbl_type == "pandas":
+        tbl = df_pl.to_pandas().astype("boolean")
+    elif tbl_type == "duckdb":
+        tbl = ibis.memtable(df_pl.to_arrow())
+    else:
+        tbl = df_pl
+
+    tabular_output = col_summary_tbl(tbl)
+    assert isinstance(tabular_output, GT)
+
+    # Every boolean column is summarized by its proportions of `True` and `False` values
+    html = tabular_output.as_raw_html()
+    assert html.count("<span style='font-weight: bold;'>T</span>") == n_bool_cols
+    assert html.count("<span style='font-weight: bold;'>F</span>") == n_bool_cols
+
+    # The frequencies always hold a count for both values, with zero for an absent value
+    for colname, values in bool_data.items():
+        profile = next(
+            prof for prof in DataScan(data=tbl).profile.column_profiles if prof.colname == colname
+        )
+        freqs = next(stat.val for stat in profile.statistics if stat.name == "freqs")
+        assert freqs["True"] == values.count(True)
+        assert freqs["False"] == values.count(False)
+
+
 def test_datascan_class_raises():
     with pytest.raises(TypeError):
         DataScan(data="not a DataFrame or Ibis Table")
