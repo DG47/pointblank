@@ -84,7 +84,8 @@ class DataScan:
     ----------------------------------------
     For each column, the following measures are provided:
 
-    - `n_missing`: the number of missing values in the column
+    - `n_missing`: the number of missing values in the column (NaN in a float column counts as
+    missing and is left out of the other statistics)
     - `n_unique`: the number of distinct values in the column (if there are missing values, they
     count as one more distinct value)
 
@@ -246,6 +247,12 @@ class DataScan:
             except NotImplementedError:
                 profile.skipped_columns[column] = str(native_dtype)
                 continue
+
+            # NaN is treated as missing: it's counted in `n_missing` and left out of the other
+            # statistics, as on pandas (otherwise Polars, PyArrow and Ibis tables get a NaN mean,
+            # skewed quantiles and NaN counted as a value)
+            if native_dtype.is_float():
+                col_data = col_data.with_columns(nw.col(column).fill_nan(None))
 
             col_profile = ColumnProfile(colname=column, coltype=str(native_dtype))
 

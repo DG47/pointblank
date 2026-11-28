@@ -205,6 +205,57 @@ def test_datascan_quantiles_match_their_labels(backend):
         assert stats["p95"] == pytest.approx(95.05)
 
 
+@pytest.mark.parametrize("backend", ["polars", "polars-lazy", "pandas", "pyarrow", "duckdb"])
+def test_datascan_treats_nan_as_missing(backend):
+    # NaN is counted in `n_missing` and left out of the other statistics, as with a null
+    df_pl = pl.DataFrame({"x": [1.0, 2.0, 3.0, 4.0, float("nan"), None]})
+    if backend == "polars-lazy":
+        tbl = df_pl.lazy()
+    elif backend == "pandas":
+        tbl = df_pl.to_pandas()
+    elif backend == "pyarrow":
+        tbl = df_pl.to_arrow()
+    elif backend == "duckdb":
+        ibis = pytest.importorskip("ibis")
+        tbl = ibis.memtable(df_pl.to_arrow())
+    else:
+        tbl = df_pl
+
+    (profile,) = DataScan(data=tbl).profile.column_profiles
+    stats = {s.name: s.val for s in profile.statistics}
+
+    assert stats["n_missing"] == 2
+    assert stats["n_unique"] == 5  # 1, 2, 3, 4 and the missing values
+    assert stats["mean"] == pytest.approx(2.5)
+    assert stats["std"] == pytest.approx(1.2909944)
+    assert stats["min"] == pytest.approx(1.0)
+    assert stats["p05"] == pytest.approx(1.15)
+    assert stats["q_1"] == pytest.approx(1.75)
+    assert stats["median"] == pytest.approx(2.5)
+    assert stats["q_3"] == pytest.approx(3.25)
+    assert stats["p95"] == pytest.approx(3.85)
+    assert stats["max"] == pytest.approx(4.0)
+    assert stats["iqr"] == pytest.approx(1.5)
+    assert list(profile.sample_data) == ["1.0", "2.0", "3.0", "4.0"]
+
+
+@pytest.mark.parametrize("backend", ["polars", "pandas", "pyarrow"])
+def test_col_summary_tbl_all_nan_column(backend):
+    # An all-NaN column is summarized like an all-null one
+    df_pl = pl.DataFrame({"x": [float("nan")] * 3, "y": [1.0, 2.0, 3.0]})
+    tbl = {"polars": df_pl, "pandas": df_pl.to_pandas(), "pyarrow": df_pl.to_arrow()}[backend]
+
+    scanner = DataScan(data=tbl)
+    stats = {s.name: s.val for s in scanner.profile.column_profiles[0].statistics}
+
+    assert stats["n_missing"] == 3
+    assert stats["n_unique"] == 1
+    for name in ("mean", "median", "p05", "q_1", "q_3", "p95", "min", "max"):
+        assert stats[name] is None or stats[name] != stats[name]  # null (or NaN on pandas)
+
+    assert isinstance(col_summary_tbl(tbl), GT)
+
+
 @given(happy_path_df | happy_path_ldf | _arrow_strat() | _pandas_strat())
 @example(pb.load_dataset("small_table", "polars"))
 @example(pb.load_dataset("small_table", "pandas"))
